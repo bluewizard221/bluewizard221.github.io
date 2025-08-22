@@ -622,18 +622,6 @@
                     rankingHtml += '</tr>';
                 });
                 rankingHtml += '</tbody></table></div>';
-                
-                // サマリー情報を追加
-                const totalDuplicates = duplicateValues.reduce((sum, item) => sum + item.count, 0);
-                const duplicateRate = (totalDuplicates / frameData.length * 100).toFixed(1);
-                const uniqueDuplicates = duplicateValues.length;
-                
-                rankingHtml += `<div class="alert alert-info">`;
-                rankingHtml += `<strong>重複サマリー:</strong> `;
-                rankingHtml += `重複値の種類: ${uniqueDuplicates}個、`;
-                rankingHtml += `重複出現の総数: ${totalDuplicates}回、`;
-                rankingHtml += `重複率: ${duplicateRate}%`;
-                rankingHtml += `</div>`;
             }
             
             document.getElementById('frequencyRanking').innerHTML = rankingHtml;
@@ -832,7 +820,7 @@
 
             // 処理実行
             setTimeout(() => {
-                console.log(`乱数生成開始: ${elapsedFrames + 1}フレーム`);
+                console.log(`乱数生成開始: ${Math.max(1, elapsedFrames)}フレーム`);
                 const startTime = Date.now();
                 
                 // 電源投入時は0から開始
@@ -841,8 +829,8 @@
                 // 各フレームでの乱数値を記録
                 const frameData = [];
                 
-                // フレーム0からelapsedFramesまでの乱数値を生成・記録
-                for (let i = 0; i <= elapsedFrames; i++) {
+                // フレーム0からelapsedFrames-1まで、またはelapsedFramesが0の場合は1回だけ実行
+                for (let i = 0; i < Math.max(1, elapsedFrames); i++) {
                     const randomValue = rng.generate();
                     frameData.push({
                         frame: i,
@@ -856,7 +844,7 @@
 
                 // 最終結果を表示
                 const finalData = frameData[frameData.length - 1];
-                displayBasicStats(finalData.randomValue, finalData.internalState, (elapsedFrames + 1) % 256, frameData.length);
+                displayBasicStats(finalData.randomValue, finalData.internalState, elapsedFrames % 256, frameData.length);
                 
                 // 統計分析を表示
                 displayFrequencyAnalysis(frameData);
