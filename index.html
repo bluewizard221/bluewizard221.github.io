@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DQ1-2 乱数生成分析</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin: 20px 0;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-box {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 5px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DQ1-2 乱数生成分析（SFC版）</h1>
+        
+        <div class="controls">
+            <label>初期乱数値: <input type="number" id="initialRand" value="12345" min="0" max="4294967295"></label>
+            <label>経過フレーム数: <input type="number" id="elapsedFrames" value="0" min="0" max="100000"></label>
+            <button onclick="generateAndAnalyze()">乱数生成</button>
+        </div>
+
+        <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="container" style="display: none;">
+        <h2>分布グラフ</h2>
+        <div class="chart-container">
+            <canvas id="distributionChart"></canvas>
+        </div>
+    </div>
+
+    <div class="container" id="timeSeriesContainer" style="display: none;">
+        <h2>フレーム別乱数値グラフ</h2>
+        <div class="chart-container">
+            <canvas id="timeSeriesChart"></canvas>
+        </div>
+    </div>
+
+    <div class="container" style="display: none;">
+        <h2>連続値の差分分析</h2>
+        <div class="chart-container">
+            <canvas id="differenceChart"></canvas>
+        </div>
+    </div>
+
+    <div class="container" id="frameContainer" style="display: none;">
+        <h2>フレーム別詳細データ</h2>
+        <div id="frameResults" style="max-height: 500px; overflow-y: auto; font-family: monospace; font-size: 14px; background: #f8f9fa; padding: 15px; border-radius: 5px;"></div>
+    </div>
+
+    <script>
+        // DQ1-2乱数生成の実装
+        class DQ12Random {
+            constructor(initialRand = 0, initialFrame = 0) {
+                this.rand = initialRand;
+                this.frame = initialFrame;
+            }
+
+            // 16bitキャリー付き加算
+            addWithCarry(a, b, carry) {
+                const result = a + b + (carry ? 1 : 0);
+                return {
+                    value: result & 0xFFFF,
+                    carry: result > 0xFFFF
+                };
+            }
+
+            // 乱数生成（記事のアセンブリコードを再現）
+            generate() {
+                // rand *= 3 (16bit x 16bitで32bit結果)
+                this.rand = (this.rand * 3) & 0xFFFFFFFF;
+
+                // 32bitを16bitずつに分割
+                let randLower = this.rand & 0xFFFF;
+                let randUpper = (this.rand >> 16) & 0xFFFF;
+
+                // 0x3549を加算
+                let carry = false;
+                const add1 = this.addWithCarry(randLower, 0x3549, carry);
+                randLower = add1.value;
+                carry = add1.carry;
+
+                // フレーム値を加算
+                const add2 = this.addWithCarry(randLower, this.frame & 0xFF, carry);
+                randLower = add2.value;
+                carry = add2.carry;
+
+                // 上位16bitにキャリーを加算
+                const add3 = this.addWithCarry(randUpper, 0, carry);
+                randUpper = add3.value;
+
+                // 32bit値を再構成
+                this.rand = ((randUpper << 16) | randLower) >>> 0;
+
+                // フレームカウンタを増加
+                this.frame = (this.frame + 1) & 0xFF;
+
+                // 上位16bitの下位8bitを返す（記事のアセンブリコード通り）
+                return randUpper & 0xFF;
+            }
+
+            // 複数の乱数を生成（最適化版）
+            generateSequence(count) {
+                const sequence = new Array(count);
+                for (let i = 0; i < count; i++) {
+                    sequence[i] = this.generate();
+                    
+                    // 大量データ処理時の進行状況表示（100万サンプルごと）
+                    if (count > 1000000 && i > 0 && i % 1000000 === 0) {
+                        console.log(`進行状況: ${i.toLocaleString()} / ${count.toLocaleString()} (${Math.round(i/count*100)}%)`);
+                    }
+                }
+                return sequence;
+            }
+
+            // フレーム別乱数生成（デバッグ用）
+            generateFrameSequence(startFrame, endFrame) {
+                const results = [];
+                
+                for (let f = startFrame; f <= endFrame; f++) {
+                    const currentFrame = f & 0xFF;
+                    this.frame = currentFrame;
+                    
+                    // 乱数生成前の状態を記録
+                    const beforeRand = this.rand;
+                    const beforeFrame = this.frame;
+                    
+                    // 乱数生成
+                    const randomValue = this.generate();
+                    
+                    results.push({
+                        frameNumber: f,
+                        frameValue: beforeFrame,
+                        beforeRand: beforeRand,
+                        afterRand: this.rand,
+                        randomOutput: randomValue
+                    });
+                }
+                
+                return results;
+            }
+        }
+
+        // 統計計算（最適化版）
+        function calculateStats(data) {
+            const n = data.length;
+            console.log(`統計計算開始: ${n.toLocaleString()}サンプル`);
+            
+            // 基本統計（高速計算）
+            let sum = 0;
+            let min = 255;
+            let max = 0;
+            const distribution = new Array(256).fill(0);
+            
+            for (let i = 0; i < n; i++) {
+                const val = data[i];
+                sum += val;
+                if (val < min) min = val;
+                if (val > max) max = val;
+                distribution[val]++;
+            }
+            
+            const mean = sum / n;
+            
+            // 分散計算
+            let variance = 0;
+            for (let i = 0; i < n; i++) {
+                const diff = data[i] - mean;
+                variance += diff * diff;
+            }
+            variance /= n;
+            const stdDev = Math.sqrt(variance);
+            
+            // 分布統計
+            const maxFreq = Math.max(...distribution);
+            const minFreq = Math.min(...distribution.filter(f => f > 0)); // 0を除外
+            
+            return {
+                count: n,
+                mean: mean.toFixed(2),
+                stdDev: stdDev.toFixed(2),
+                min: min,
+                max: max,
+                maxFreq: maxFreq,
+                minFreq: minFreq,
+                freqRatio: (maxFreq / minFreq).toFixed(2),
+                distribution: distribution
+            };
+        }
+
+        // フレーム別グラフ描画
+        function drawFrameChart(frameData) {
+            const timeSeriesCtx = document.getElementById('timeSeriesChart').getContext('2d');
+            if (window.timeSeriesChart && typeof window.timeSeriesChart.destroy === 'function') {
+                window.timeSeriesChart.destroy();
+            }
+            
+            const frameLabels = frameData.map(data => `F${data.frame}`);
+            const randomValues = frameData.map(data => data.randomValue);
+            
+            window.timeSeriesChart = new Chart(timeSeriesCtx, {
+                type: 'line',
+                data: {
+                    labels: frameLabels,
+                    datasets: [{
+                        label: '乱数値',
+                        data: randomValues,
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointBackgroundColor: 'rgba(255, 99, 132, 1)',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: { 
+                                display: true, 
+                                text: 'フレーム番号',
+                                font: { size: 14 }
+                            },
+                            grid: {
+                                display: true,
+                                color: 'rgba(0,0,0,0.1)'
+                            }
+                        },
+                        y: {
+                            title: { 
+                                display: true, 
+                                text: '乱数値 (0-255)',
+                                font: { size: 14 }
+                            },
+                            min: 0,
+                            max: 255,
+                            grid: {
+                                display: true,
+                                color: 'rgba(0,0,0,0.1)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const frameIndex = context.dataIndex;
+                                    const frameInfo = frameData[frameIndex];
+                                    return [
+                                        `フレーム ${frameInfo.frame}: ${frameInfo.randomValue}`,
+                                        `16進: 0x${frameInfo.randomValue.toString(16).padStart(2, '0').toUpperCase()}`,
+                                        `内部状態: ${frameInfo.internalState}`
+                                    ];
+                                }
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                }
+            });
+        }
+        // 旧グラフ関数（使用しない）
+        function drawCharts(data, stats, initialFrame) {
+        }
+
+        // 単一結果表示
+        function displaySingleResult(randomValue, finalRandState, currentFrame, totalFrames) {
+            const statsContainer = document.getElementById('stats');
+            statsContainer.innerHTML = `
+                <div class="stat-box">
+                    <div class="stat-value">${randomValue}</div>
+                    <div class="stat-label">最終乱数値</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">0x${randomValue.toString(16).padStart(2, '0').toUpperCase()}</div>
+                    <div class="stat-label">16進表示</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${totalFrames}</div>
+                    <div class="stat-label">総フレーム数</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${finalRandState}</div>
+                    <div class="stat-label">内部乱数状態</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${currentFrame}</div>
+                    <div class="stat-label">現在のフレーム値</div>
+                </div>
+            `;
+        }
+
+        // 全フレーム結果表示
+        function displayAllFrameResults(frameData) {
+            const container = document.getElementById('frameResults');
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            html += '<tr style="background: #dee2e6; font-weight: bold;">';
+            html += '<th style="padding: 8px; border: 1px solid #adb5bd;">フレーム#</th>';
+            html += '<th style="padding: 8px; border: 1px solid #adb5bd;">フレーム値($67)</th>';
+            html += '<th style="padding: 8px; border: 1px solid #adb5bd;">乱数値</th>';
+            html += '<th style="padding: 8px; border: 1px solid #adb5bd;">16進</th>';
+            html += '<th style="padding: 8px; border: 1px solid #adb5bd;">内部状態</th>';
+            html += '</tr>';
+
+            // 最大10,000フレームまで表示
+            const displayData = frameData.slice(0, 10000);
+            
+            displayData.forEach((data, index) => {
+                const bgColor = index % 2 === 0 ? '#f8f9fa' : 'white';
+                const frameValue = data.frame % 256;
+                html += `<tr style="background: ${bgColor};">`;
+                html += `<td style="padding: 6px; border: 1px solid #dee2e6; text-align: center;">${data.frame}</td>`;
+                html += `<td style="padding: 6px; border: 1px solid #dee2e6; text-align: center;">${frameValue} (0x${frameValue.toString(16).padStart(2, '0').toUpperCase()})</td>`;
+                html += `<td style="padding: 6px; border: 1px solid #dee2e6; text-align: center; font-weight: bold; color: #007bff;">${data.randomValue}</td>`;
+                html += `<td style="padding: 6px; border: 1px solid #dee2e6; text-align: center;">0x${data.randomValue.toString(16).padStart(2, '0').toUpperCase()}</td>`;
+                html += `<td style="padding: 6px; border: 1px solid #dee2e6; text-align: right; font-family: monospace;">${data.internalState.toString(16).padStart(8, '0').toUpperCase()}</td>`;
+                html += '</tr>';
+            });
+
+            html += '</table>';
+            
+            // 表示制限の警告
+            if (frameData.length > 10000) {
+                html = '<div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin-bottom: 10px; border-radius: 5px;">表示データが多いため、最初の10,000フレームのみ表示しています。</div>' + html;
+            }
+            
+            container.innerHTML = html;
+        }
+
+        // メイン処理
+        function generateAndAnalyze() {
+            const initialRand = parseInt(document.getElementById('initialRand').value);
+            const elapsedFrames = parseInt(document.getElementById('elapsedFrames').value);
+
+            // 進行状況表示
+            const statsContainer = document.getElementById('stats');
+            statsContainer.innerHTML = '<div class="stat-box"><div class="stat-value">処理中...</div><div class="stat-label">乱数生成中</div></div>';
+
+            // 処理実行
+            setTimeout(() => {
+                console.log(`乱数生成開始: ${elapsedFrames + 1}フレーム`);
+                const startTime = Date.now();
+                
+                // 電源投入時は0から開始
+                const rng = new DQ12Random(initialRand, 0);
+                
+                // 各フレームでの乱数値を記録
+                const frameData = [];
+                
+                // フレーム0からelapsedFramesまでの乱数値を生成・記録
+                for (let i = 0; i <= elapsedFrames; i++) {
+                    const randomValue = rng.generate();
+                    frameData.push({
+                        frame: i,
+                        randomValue: randomValue,
+                        internalState: rng.rand
+                    });
+                }
+                
+                const generationTime = Date.now() - startTime;
+                console.log(`乱数生成完了: ${generationTime}ms`);
+
+                // 最終結果を表示
+                const finalData = frameData[frameData.length - 1];
+                displaySingleResult(finalData.randomValue, finalData.internalState, (elapsedFrames + 1) % 256, frameData.length);
+                
+                // グラフを表示
+                if (elapsedFrames > 0) {
+                    document.getElementById('timeSeriesContainer').style.display = 'block';
+                    drawFrameChart(frameData);
+                } else {
+                    document.getElementById('timeSeriesContainer').style.display = 'none';
+                }
+                
+                // フレーム別詳細表示
+                if (elapsedFrames >= 0) {
+                    document.getElementById('frameContainer').style.display = 'block';
+                    displayAllFrameResults(frameData);
+                }
+                
+                const totalTime = Date.now() - startTime;
+                console.log(`総処理時間: ${totalTime}ms`);
+            }, 10);
+        }
+
+        // 初期実行
+        generateAndAnalyze();
+    </script>
+</body>
+</html>
